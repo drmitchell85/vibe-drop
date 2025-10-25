@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+	
 	"github.com/gorilla/mux"
 	"vibe-drop/internal/apigateway/handlers"
 	"vibe-drop/internal/apigateway/middleware"
@@ -10,6 +12,7 @@ func SetupRoutes() *mux.Router {
 	r := mux.NewRouter()
 
 	// Apply middleware to all routes (order matters!)
+	r.Use(middleware.DefaultCORS())
 	r.Use(middleware.RequestLogging())
 	r.Use(middleware.DefaultRateLimit())
 
@@ -23,6 +26,13 @@ func SetupRoutes() *mux.Router {
 	fileRouter.HandleFunc("/{id}", handlers.GetFileMetadataHandler).Methods("GET")
 	fileRouter.HandleFunc("/{id}/download", handlers.DownloadFileHandler).Methods("GET")
 	fileRouter.HandleFunc("/{id}", handlers.DeleteFileHandler).Methods("DELETE")
+	
+	// Add OPTIONS support for all routes (handled by CORS middleware)
+	r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This will be handled by CORS middleware for OPTIONS requests
+		// For non-OPTIONS requests that don't match other routes, return 404
+		w.WriteHeader(404)
+	}).Methods("OPTIONS")
 
 	// Auth service routes
 	authRouter := r.PathPrefix("/auth").Subrouter()
