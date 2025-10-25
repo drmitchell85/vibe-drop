@@ -12,6 +12,7 @@ func SetupRoutes() *mux.Router {
 	r := mux.NewRouter()
 
 	// Apply middleware to all routes (order matters!)
+	r.Use(middleware.Recovery())
 	r.Use(middleware.DefaultCORS())
 	r.Use(middleware.RequestLogging())
 	r.Use(middleware.DefaultRateLimit())
