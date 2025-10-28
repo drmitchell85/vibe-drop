@@ -26,6 +26,17 @@ func Start() {
 	if err := s3Client.TestConnection(context.Background()); err != nil {
 		log.Printf("Warning: S3 connection test failed: %v", err)
 	}
+
+	// Initialize DynamoDB client
+	dynamoClient, err := storage.NewDynamoClient(cfg.DynamoRegion, cfg.DynamoEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to create DynamoDB client: %v", err)
+	}
+
+	// Test DynamoDB connection
+	if err := dynamoClient.TestConnection(context.Background()); err != nil {
+		log.Printf("Warning: DynamoDB connection test failed: %v", err)
+	}
 	
 	router := routes.SetupRoutes(cfg, s3Client)
 
