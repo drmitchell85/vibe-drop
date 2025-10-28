@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/mux"
+	"vibe-drop/internal/fileservice/storage"
 )
 
 type PresignedURLResponse struct {
@@ -28,33 +30,63 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func GenerateUploadURLHandler(w http.ResponseWriter, r *http.Request) {
-	// Mock presigned URL for file upload
-	response := PresignedURLResponse{
-		URL:       "https://mock-s3.amazonaws.com/vibe-drop-bucket/mock-file-id-12345?X-Amz-Signature=mock",
-		ExpiresAt: time.Now().Add(15 * time.Minute),
-		FileID:    "mock-file-id-12345",
-	}
+func GenerateUploadURLHandler(s3Client *storage.S3Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Parse request to get filename
+		var req struct {
+			Filename string `json:"filename"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+		if req.Filename == "" {
+			http.Error(w, "Filename is required", http.StatusBadRequest)
+			return
+		}
+
+		// Generate presigned URL
+		url, fileID, err := s3Client.GenerateUploadURL(context.Background(), req.Filename)
+		if err != nil {
+			http.Error(w, "Failed to generate upload URL", http.StatusInternalServerError)
+			return
+		}
+
+		response := PresignedURLResponse{
+			URL:       url,
+			ExpiresAt: time.Now().Add(15 * time.Minute),
+			FileID:    fileID,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+	}
 }
 
-func GenerateDownloadURLHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	fileID := vars["id"]
+func GenerateDownloadURLHandler(s3Client *storage.S3Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		fileID := vars["id"]
 
-	// Mock presigned URL for file download
-	response := PresignedURLResponse{
-		URL:       "https://mock-s3.amazonaws.com/vibe-drop-bucket/" + fileID + "?X-Amz-Signature=mock-download",
-		ExpiresAt: time.Now().Add(15 * time.Minute),
-		FileID:    fileID,
+		// Generate presigned URL for download
+		url, err := s3Client.GenerateDownloadURL(context.Background(), fileID)
+		if err != nil {
+			http.Error(w, "Failed to generate download URL", http.StatusInternalServerError)
+			return
+		}
+
+		response := PresignedURLResponse{
+			URL:       url,
+			ExpiresAt: time.Now().Add(15 * time.Minute),
+			FileID:    fileID,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
 }
 
 func GetFileMetadataHandler(w http.ResponseWriter, r *http.Request) {
