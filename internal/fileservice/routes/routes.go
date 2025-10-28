@@ -2,10 +2,11 @@ package routes
 
 import (
 	"github.com/gorilla/mux"
+	"vibe-drop/internal/fileservice/config"
 	"vibe-drop/internal/fileservice/handlers"
 )
 
-func SetupRoutes() *mux.Router {
+func SetupRoutes(cfg *config.Config) *mux.Router {
 	r := mux.NewRouter()
 
 	// Health check
