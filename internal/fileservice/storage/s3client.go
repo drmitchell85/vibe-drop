@@ -1,0 +1,109 @@
+package storage
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
+)
+
+type S3Client struct {
+	client *s3.Client
+	bucket string
+}
+
+func NewS3Client(bucket, region, endpoint string) (*S3Client, error) {
+	// For LocalStack, we need to provide fake credentials
+	// In production, these would come from AWS IAM roles or environment variables
+	creds := credentials.NewStaticCredentialsProvider(
+		"test",      // Access Key ID (fake for LocalStack)
+		"test",      // Secret Access Key (fake for LocalStack) 
+		"",          // Session Token (not needed)
+	)
+
+	// Load AWS configuration
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithCredentialsProvider(creds),
+		config.WithRegion(region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	// Create S3 client with custom endpoint for LocalStack
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+			// Force path-style addressing (required for LocalStack)
+			o.UsePathStyle = true
+		}
+	})
+
+	client := &S3Client{
+		client: s3Client,
+		bucket: bucket,
+	}
+
+	log.Printf("S3 Client created for bucket: %s, endpoint: %s", bucket, endpoint)
+	return client, nil
+}
+
+// Test connection by listing buckets
+func (s *S3Client) TestConnection(ctx context.Context) error {
+	_, err := s.client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to S3: %w", err)
+	}
+	log.Println("S3 connection test successful")
+	return nil
+}
+
+// GenerateUploadURL creates a presigned URL for uploading a file
+func (s *S3Client) GenerateUploadURL(ctx context.Context, filename string) (string, string, error) {
+	// Generate unique file ID
+	fileID := uuid.New().String()
+	key := fmt.Sprintf("%s-%s", fileID, filename)
+
+	presignClient := s3.NewPresignClient(s.client)
+	
+	request, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = 15 * time.Minute
+	})
+	
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate upload URL: %w", err)
+	}
+	
+	return request.URL, fileID, nil
+}
+
+// GenerateDownloadURL creates a presigned URL for downloading a file
+func (s *S3Client) GenerateDownloadURL(ctx context.Context, fileID string) (string, error) {
+	// In a real implementation, you'd look up the actual key from metadata
+	// For now, we'll construct it (this assumes the key format fileID-filename)
+	key := fileID // Simplified - in practice you'd store filename mapping
+	
+	presignClient := s3.NewPresignClient(s.client)
+	
+	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = 15 * time.Minute
+	})
+	
+	if err != nil {
+		return "", fmt.Errorf("failed to generate download URL: %w", err)
+	}
+	
+	return request.URL, nil
+}

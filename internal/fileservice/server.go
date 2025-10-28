@@ -8,13 +8,26 @@ import (
 
 	"vibe-drop/internal/fileservice/config"
 	"vibe-drop/internal/fileservice/routes"
+	"vibe-drop/internal/fileservice/storage"
 )
 
 var server *http.Server
 
 func Start() {
 	cfg := config.Load()
-	router := routes.SetupRoutes(cfg)
+	
+	// Initialize S3 client
+	s3Client, err := storage.NewS3Client(cfg.S3Bucket, cfg.S3Region, cfg.S3Endpoint)
+	if err != nil {
+		log.Fatalf("Failed to create S3 client: %v", err)
+	}
+
+	// Test S3 connection
+	if err := s3Client.TestConnection(context.Background()); err != nil {
+		log.Printf("Warning: S3 connection test failed: %v", err)
+	}
+	
+	router := routes.SetupRoutes(cfg, s3Client)
 
 	server = &http.Server{
 		Addr:    ":" + cfg.Port,

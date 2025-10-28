@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -10,6 +11,7 @@ import (
 type Config struct {
 	Port           string
 	FileServiceURL string
+	Environment    string // dev, staging, prod
 }
 
 func Load() *Config {
@@ -18,10 +20,15 @@ func Load() *Config {
 		log.Printf("No .env file found or error loading .env file: %v", err)
 	}
 
-	return &Config{
-		Port:           getEnv("API_GATEWAY_PORT", "8080"),
-		FileServiceURL: getEnv("FILE_SERVICE_URL", "http://localhost:8081"),
+	env := getEnv("ENVIRONMENT", "dev")
+	cfg := &Config{
+		Port:           getEnv("API_GATEWAY_PORT", getDefaultPort(env)),
+		FileServiceURL: getRequiredEnv("FILE_SERVICE_URL"),
+		Environment:    env,
 	}
+
+	validateConfig(cfg)
+	return cfg
 }
 
 func getEnv(key, defaultValue string) string {
@@ -29,4 +36,39 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getRequiredEnv(key string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		log.Fatalf("Required environment variable %s is not set", key)
+	}
+	return value
+}
+
+func getDefaultPort(env string) string {
+	switch env {
+	case "prod":
+		return "80"   // Standard HTTP port
+	case "staging":
+		return "8080"
+	default: // dev
+		return "8080"
+	}
+}
+
+func validateConfig(cfg *Config) {
+	var errors []string
+	
+	if cfg.FileServiceURL == "" {
+		errors = append(errors, "FILE_SERVICE_URL must be set")
+	}
+	
+	if cfg.Environment != "dev" && strings.Contains(cfg.FileServiceURL, "localhost") {
+		errors = append(errors, "FILE_SERVICE_URL should not use localhost in non-dev environments")
+	}
+	
+	if len(errors) > 0 {
+		log.Fatalf("Configuration validation failed:\n%s", strings.Join(errors, "\n"))
+	}
 }
