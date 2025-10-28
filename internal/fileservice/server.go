@@ -6,20 +6,22 @@ import (
 	"net/http"
 	"time"
 
+	"vibe-drop/internal/fileservice/config"
 	"vibe-drop/internal/fileservice/routes"
 )
 
 var server *http.Server
 
 func Start() {
-	router := routes.SetupRoutes()
+	cfg := config.Load()
+	router := routes.SetupRoutes(cfg)
 
 	server = &http.Server{
-		Addr:    ":8081",
+		Addr:    ":" + cfg.Port,
 		Handler: router,
 	}
 
-	log.Println("File Service starting on port 8081...")
+	log.Printf("File Service starting on port %s...", cfg.Port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal("File Service failed to start:", err)
 	}

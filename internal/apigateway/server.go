@@ -6,22 +6,24 @@ import (
 	"net/http"
 	"time"
 
+	"vibe-drop/internal/apigateway/config"
 	"vibe-drop/internal/apigateway/routes"
 )
 
 var server *http.Server
 
 func Start() {
-	router := routes.SetupRoutes()
+	cfg := config.Load()
+	router := routes.SetupRoutes(cfg)
 
 	server = &http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + cfg.Port,
 		Handler: router,
 	}
 
-	log.Println("API Gateway starting on port 8080...")
+	log.Printf("API Gateway starting on port %s...", cfg.Port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal("Server failed to start:", err)
+		log.Fatal("API Gateway failed to start:", err)
 	}
 }
 

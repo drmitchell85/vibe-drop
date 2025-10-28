@@ -4,11 +4,14 @@ import (
 	"net/http"
 	
 	"github.com/gorilla/mux"
+	"vibe-drop/internal/apigateway/config"
 	"vibe-drop/internal/apigateway/handlers"
 	"vibe-drop/internal/apigateway/middleware"
 )
 
-func SetupRoutes() *mux.Router {
+func SetupRoutes(cfg *config.Config) *mux.Router {
+	// Initialize handlers with config
+	handlers.InitializeFileServiceClient(cfg.FileServiceURL)
 	r := mux.NewRouter()
 
 	// Apply middleware to all routes (order matters!)
