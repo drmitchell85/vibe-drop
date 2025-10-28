@@ -5,7 +5,7 @@ The point of this project is to create a dropbox style program leveraging Go and
 - users can upload files
 - users can download files
 
-## Non-functional requirements
+## Non-functional Requirements
 - prioritize availability over consistency
 - documents can be up to 50GB
     - resumable downloads / upload supported
@@ -21,13 +21,13 @@ The point of this project is to create a dropbox style program leveraging Go and
 - rate limiting
 - api routing
 
-## File Service
+### File Service
 - generate presignedURL
 
-## Database
+### Database
 - DynamoDB
 - handle file metadata
 - handle users
 
-## S3 storage
+### S3 storage
 - stores actual file
