@@ -117,3 +117,51 @@ func (s *S3Client) DeleteObject(ctx context.Context, s3Key string) error {
 	log.Printf("Deleted S3 object: %s", s3Key)
 	return nil
 }
+
+// MultipartUploadInfo contains details for a multipart upload
+type MultipartUploadInfo struct {
+	UploadID string
+	Key      string
+}
+
+// InitiateMultipartUpload starts a multipart upload process
+func (s *S3Client) InitiateMultipartUpload(ctx context.Context, filename string) (*MultipartUploadInfo, error) {
+	fileID := uuid.New().String()
+	key := fmt.Sprintf("%s-%s", fileID, filename)
+
+	result, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initiate multipart upload: %w", err)
+	}
+
+	info := &MultipartUploadInfo{
+		UploadID: *result.UploadId,
+		Key:      key,
+	}
+
+	log.Printf("Initiated multipart upload: %s (uploadID: %s)", key, info.UploadID)
+	return info, nil
+}
+
+// GenerateMultipartUploadURL creates presigned URLs for each chunk
+func (s *S3Client) GenerateMultipartUploadURL(ctx context.Context, uploadInfo *MultipartUploadInfo, partNumber int) (string, error) {
+	presignClient := s3.NewPresignClient(s.client)
+
+	request, err := presignClient.PresignUploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(s.bucket),
+		Key:        aws.String(uploadInfo.Key),
+		PartNumber: aws.Int32(int32(partNumber)),
+		UploadId:   aws.String(uploadInfo.UploadID),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = 15 * time.Minute
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to generate multipart upload URL for part %d: %w", partNumber, err)
+	}
+
+	return request.URL, nil
+}
