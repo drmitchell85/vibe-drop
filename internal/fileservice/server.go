@@ -38,7 +38,7 @@ func Start() {
 		log.Printf("Warning: DynamoDB connection test failed: %v", err)
 	}
 	
-	router := routes.SetupRoutes(cfg, s3Client)
+	router := routes.SetupRoutes(cfg, s3Client, dynamoClient)
 
 	server = &http.Server{
 		Addr:    ":" + cfg.Port,
