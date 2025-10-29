@@ -9,11 +9,13 @@ import (
 )
 
 type Config struct {
-	Port       string
-	S3Bucket   string
-	S3Region   string
-	S3Endpoint string // For LocalStack vs real AWS
-	Environment string // dev, staging, prod
+	Port            string
+	S3Bucket        string
+	S3Region        string
+	S3Endpoint      string // For LocalStack vs real AWS
+	DynamoEndpoint  string // For LocalStack vs real AWS
+	DynamoRegion    string
+	Environment     string // dev, staging, prod
 }
 
 func Load() *Config {
@@ -24,11 +26,13 @@ func Load() *Config {
 
 	env := getEnv("ENVIRONMENT", "dev")
 	cfg := &Config{
-		Port:        getEnv("FILE_SERVICE_PORT", getDefaultPort(env)),
-		S3Bucket:    getRequiredEnv("S3_BUCKET"),
-		S3Region:    getEnv("S3_REGION", getDefaultRegion(env)),
-		S3Endpoint:  getS3Endpoint(env),
-		Environment: env,
+		Port:           getEnv("FILE_SERVICE_PORT", getDefaultPort(env)),
+		S3Bucket:       getRequiredEnv("S3_BUCKET"),
+		S3Region:       getEnv("S3_REGION", getDefaultRegion(env)),
+		S3Endpoint:     getS3Endpoint(env),
+		DynamoEndpoint: getDynamoEndpoint(env),
+		DynamoRegion:   getEnv("DYNAMO_REGION", getDefaultRegion(env)),
+		Environment:    env,
 	}
 
 	validateConfig(cfg)
@@ -74,6 +78,19 @@ func getDefaultRegion(env string) string {
 
 func getS3Endpoint(env string) string {
 	if endpoint := os.Getenv("S3_ENDPOINT"); endpoint != "" {
+		return endpoint
+	}
+	
+	switch env {
+	case "prod", "staging":
+		return "" // Use default AWS endpoint
+	default: // dev
+		return "http://localhost:4566" // LocalStack
+	}
+}
+
+func getDynamoEndpoint(env string) string {
+	if endpoint := os.Getenv("DYNAMO_ENDPOINT"); endpoint != "" {
 		return endpoint
 	}
 	

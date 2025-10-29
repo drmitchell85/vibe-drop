@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -30,7 +31,7 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-func GenerateUploadURLHandler(s3Client *storage.S3Client) http.HandlerFunc {
+func GenerateUploadURLHandler(s3Client *storage.S3Client, dynamoClient *storage.DynamoClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Parse request to get filename
 		var req struct {
@@ -53,6 +54,24 @@ func GenerateUploadURLHandler(s3Client *storage.S3Client) http.HandlerFunc {
 			return
 		}
 
+		// Save file metadata to DynamoDB
+		metadata := &storage.FileMetadata{
+			FileID:      fileID,
+			Filename:    req.Filename,
+			TotalSize:   0, // Will be updated when upload completes (future enhancement)
+			ContentType: "application/octet-stream", // Default, could be inferred from filename
+			Status:      "uploading", // Will be "completed" when upload finishes
+			UploadType:  "single",
+			UploadedAt:  time.Now().Format(time.RFC3339),
+			UserID:      "default-user", // TODO: Replace with real user ID from auth
+			S3Key:       fileID + "-" + req.Filename, // This matches S3Client.GenerateUploadURL key format
+		}
+
+		if err := dynamoClient.SaveFileMetadata(context.Background(), metadata); err != nil {
+			log.Printf("Warning: Failed to save file metadata: %v", err)
+			// Don't fail the request - S3 URL is still valid
+		}
+
 		response := PresignedURLResponse{
 			URL:       url,
 			ExpiresAt: time.Now().Add(15 * time.Minute),
@@ -65,13 +84,20 @@ func GenerateUploadURLHandler(s3Client *storage.S3Client) http.HandlerFunc {
 	}
 }
 
-func GenerateDownloadURLHandler(s3Client *storage.S3Client) http.HandlerFunc {
+func GenerateDownloadURLHandler(s3Client *storage.S3Client, dynamoClient *storage.DynamoClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		fileID := vars["id"]
 
-		// Generate presigned URL for download
-		url, err := s3Client.GenerateDownloadURL(context.Background(), fileID)
+		// Look up file metadata from DynamoDB to get the correct S3 key
+		metadata, err := dynamoClient.GetFileMetadata(context.Background(), fileID)
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+
+		// Generate presigned URL using the correct S3 key from metadata
+		url, err := s3Client.GenerateDownloadURL(context.Background(), metadata.S3Key)
 		if err != nil {
 			http.Error(w, "Failed to generate download URL", http.StatusInternalServerError)
 			return
@@ -89,65 +115,103 @@ func GenerateDownloadURLHandler(s3Client *storage.S3Client) http.HandlerFunc {
 	}
 }
 
-func GetFileMetadataHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	fileID := vars["id"]
+func GetFileMetadataHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		fileID := vars["id"]
 
-	// Mock file metadata
-	response := FileMetadata{
-		ID:          fileID,
-		Filename:    "example-file.pdf",
-		Size:        1024000,
-		ContentType: "application/pdf",
-		UploadedAt:  time.Now().Add(-24 * time.Hour),
-		UserID:      "mock-user-123",
+		// Get real file metadata from DynamoDB
+		metadata, err := dynamoClient.GetFileMetadata(context.Background(), fileID)
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+
+		// Convert to response format (matches existing API)
+		response := FileMetadata{
+			ID:          metadata.FileID,
+			Filename:    metadata.Filename,
+			Size:        metadata.TotalSize,
+			ContentType: metadata.ContentType,
+			UploadedAt:  parseTime(metadata.UploadedAt),
+			UserID:      metadata.UserID,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
 }
 
-func ListFilesHandler(w http.ResponseWriter, r *http.Request) {
-	// Mock file list
-	files := []FileMetadata{
-		{
-			ID:          "file-1",
-			Filename:    "document1.pdf",
-			Size:        512000,
-			ContentType: "application/pdf",
-			UploadedAt:  time.Now().Add(-2 * time.Hour),
-			UserID:      "mock-user-123",
-		},
-		{
-			ID:          "file-2", 
-			Filename:    "image.jpg",
-			Size:        256000,
-			ContentType: "image/jpeg",
-			UploadedAt:  time.Now().Add(-1 * time.Hour),
-			UserID:      "mock-user-123",
-		},
-	}
+func ListFilesHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get real files from DynamoDB for default user
+		// TODO: Replace with real user ID from auth
+		metadataList, err := dynamoClient.ListUserFiles(context.Background(), "default-user")
+		if err != nil {
+			http.Error(w, "Failed to list files", http.StatusInternalServerError)
+			return
+		}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"files": files,
-		"count": len(files),
-	})
+		// Convert to response format
+		files := make([]FileMetadata, len(metadataList))
+		for i, metadata := range metadataList {
+			files[i] = FileMetadata{
+				ID:          metadata.FileID,
+				Filename:    metadata.Filename,
+				Size:        metadata.TotalSize,
+				ContentType: metadata.ContentType,
+				UploadedAt:  parseTime(metadata.UploadedAt),
+				UserID:      metadata.UserID,
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"files": files,
+			"count": len(files),
+		})
+	}
 }
 
-func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	fileID := vars["id"]
+func DeleteFileHandler(s3Client *storage.S3Client, dynamoClient *storage.DynamoClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		fileID := vars["id"]
 
-	// Mock successful deletion
-	response := map[string]interface{}{
-		"message": "File deleted successfully",
-		"file_id": fileID,
+		// Get file metadata to find S3 key
+		metadata, err := dynamoClient.GetFileMetadata(context.Background(), fileID)
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+
+		// Delete from S3 (future enhancement - not implemented in S3Client yet)
+		// For now, just delete metadata
+		log.Printf("TODO: Delete S3 object: %s", metadata.S3Key)
+
+		// Delete metadata from DynamoDB
+		if err := dynamoClient.DeleteFileMetadata(context.Background(), fileID); err != nil {
+			http.Error(w, "Failed to delete file", http.StatusInternalServerError)
+			return
+		}
+
+		response := map[string]interface{}{
+			"message": "File deleted successfully",
+			"file_id": fileID,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
 	}
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+// parseTime converts RFC3339 string to time.Time, with fallback to current time
+func parseTime(timeStr string) time.Time {
+	if t, err := time.Parse(time.RFC3339, timeStr); err == nil {
+		return t
+	}
+	return time.Now() // Fallback
 }

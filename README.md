@@ -177,8 +177,9 @@ FILE_SERVICE_URL=https://file-service.yourdomain.com
 ## Development Status
 - ✅ **Phase 1**: Basic microservices architecture with S3 integration
 - 🚧 **Phase 2**: Database integration for metadata (DynamoDB planned)
-- 🚧 **Phase 3**: User authentication and authorization
-- 🚧 **Phase 4**: Advanced features (resumable uploads, file sharing)
+- 🚧 **Phase 3**: Large file support with chunking/multipart uploads (up to 50GB)
+- 🚧 **Phase 4**: User authentication and authorization  
+- 🚧 **Phase 5**: Advanced features (resumable uploads, file sharing, versioning)
 
 ## Contributing
 This is a learning project built with Claude Code. Feel free to explore the codebase to understand microservices patterns and AWS integration in Go.

@@ -87,16 +87,12 @@ func (s *S3Client) GenerateUploadURL(ctx context.Context, filename string) (stri
 }
 
 // GenerateDownloadURL creates a presigned URL for downloading a file
-func (s *S3Client) GenerateDownloadURL(ctx context.Context, fileID string) (string, error) {
-	// In a real implementation, you'd look up the actual key from metadata
-	// For now, we'll construct it (this assumes the key format fileID-filename)
-	key := fileID // Simplified - in practice you'd store filename mapping
-	
+func (s *S3Client) GenerateDownloadURL(ctx context.Context, s3Key string) (string, error) {
 	presignClient := s3.NewPresignClient(s.client)
 	
 	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
+		Key:    aws.String(s3Key),
 	}, func(opts *s3.PresignOptions) {
 		opts.Expires = 15 * time.Minute
 	})
