@@ -187,13 +187,17 @@ func DeleteFileHandler(s3Client *storage.S3Client, dynamoClient *storage.DynamoC
 			return
 		}
 
-		// Delete from S3 (future enhancement - not implemented in S3Client yet)
-		// For now, just delete metadata
-		log.Printf("TODO: Delete S3 object: %s", metadata.S3Key)
+		// Delete from S3 first (fail fast if S3 deletion fails)
+		if err := s3Client.DeleteObject(context.Background(), metadata.S3Key); err != nil {
+			log.Printf("Failed to delete S3 object %s: %v", metadata.S3Key, err)
+			http.Error(w, "Failed to delete file from storage", http.StatusInternalServerError)
+			return
+		}
 
-		// Delete metadata from DynamoDB
+		// Delete metadata from DynamoDB (only after S3 deletion succeeds)
 		if err := dynamoClient.DeleteFileMetadata(context.Background(), fileID); err != nil {
-			http.Error(w, "Failed to delete file", http.StatusInternalServerError)
+			log.Printf("Warning: S3 object deleted but DynamoDB cleanup failed for %s: %v", fileID, err)
+			http.Error(w, "File deleted but metadata cleanup failed", http.StatusInternalServerError)
 			return
 		}
 

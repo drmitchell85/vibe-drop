@@ -28,9 +28,11 @@ A Dropbox-style file storage application built with Go microservices architectur
 - **Storage Layer**: AWS S3 (or LocalStack for development) for actual file storage
 
 ### Tech Stack
-- **Language**: Go 1.21+
-- **HTTP Framework**: Gorilla Mux
+- **Backend**: Go 1.21+ with Gorilla Mux
+- **Database**: DynamoDB with AWS SDK v2
 - **Cloud Storage**: AWS S3 with AWS SDK v2
+- **Frontend**: React (planned)
+- **API Documentation**: Swagger/OpenAPI (planned)
 - **Development**: LocalStack for local AWS services
 - **Configuration**: Environment-based with godotenv
 - **Containerization**: Docker (LocalStack)
@@ -38,8 +40,11 @@ A Dropbox-style file storage application built with Go microservices architectur
 ## Functional Requirements
 - ✅ Users can upload files via presigned URLs
 - ✅ Users can download files via presigned URLs  
-- 🚧 File metadata management (planned)
+- ✅ File metadata management with DynamoDB
+- ✅ File deletion (S3 + metadata)
 - 🚧 User authentication and authorization (planned)
+- 🚧 React-based web interface (planned)
+- 🚧 Large file chunking support (up to 50GB) (planned)
 
 ## Non-functional Requirements
 - ✅ Prioritize availability over consistency
@@ -56,10 +61,12 @@ All requests are proxied through the API Gateway to the File Service.
 |--------|----------|-------------|
 | GET    | `/health` | Health check for API Gateway |
 | POST   | `/files/upload-url` | Get presigned URL for file upload |
-| GET    | `/files` | List all files (mock data) |
+| GET    | `/files` | List all files for user |
 | GET    | `/files/{id}` | Get file metadata |
 | GET    | `/files/{id}/download-url` | Get presigned URL for file download |
-| DELETE | `/files/{id}` | Delete file (mock implementation) |
+| DELETE | `/files/{id}` | Delete file from S3 and metadata |
+
+> **Note**: Full interactive API documentation will be available via Swagger UI in Phase 5
 
 ### File Service (Port 8081)
 Direct service endpoints (normally accessed via API Gateway).
@@ -171,15 +178,33 @@ FILE_SERVICE_URL=https://file-service.yourdomain.com
 
 ## Core Entities
 - **Files**: Stored in S3 with unique keys
-- **File Metadata**: File information, ownership, S3 key mapping (planned)
+- **File Metadata**: File information, ownership, S3 key mapping (DynamoDB)
+- **File Chunks**: Support for large file uploads (DynamoDB, ready for chunking)
 - **Users**: User accounts and authentication (planned)
 
+## Frontend (Planned)
+The React frontend will provide:
+- **Drag & drop file uploads** with progress indicators
+- **File browser interface** with search and filtering
+- **Download management** with direct browser downloads
+- **User authentication** with JWT-based sessions
+- **Responsive design** for desktop and mobile
+- **Real-time upload status** and error handling
+
+## API Documentation (Planned)
+- **Swagger/OpenAPI 3.0** specification
+- **Interactive API explorer** with try-it-out functionality
+- **Request/response examples** for all endpoints
+- **Authentication flow documentation**
+- **Error code reference** with troubleshooting guides
+
 ## Development Status
-- ✅ **Phase 1**: Basic microservices architecture with S3 integration
-- 🚧 **Phase 2**: Database integration for metadata (DynamoDB planned)
+- ✅ **Phase 1**: Basic microservices architecture with S3 integration  
+- ✅ **Phase 2**: Database integration for metadata (DynamoDB implemented)
 - 🚧 **Phase 3**: Large file support with chunking/multipart uploads (up to 50GB)
-- 🚧 **Phase 4**: User authentication and authorization  
-- 🚧 **Phase 5**: Advanced features (resumable uploads, file sharing, versioning)
+- 🚧 **Phase 4**: User authentication and authorization
+- 🚧 **Phase 5**: React frontend and Swagger API documentation
+- 🚧 **Phase 6**: Advanced features (resumable uploads, file sharing, versioning)
 
 ## Contributing
 This is a learning project built with Claude Code. Feel free to explore the codebase to understand microservices patterns and AWS integration in Go.

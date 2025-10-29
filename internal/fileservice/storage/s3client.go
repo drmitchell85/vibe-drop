@@ -103,3 +103,17 @@ func (s *S3Client) GenerateDownloadURL(ctx context.Context, s3Key string) (strin
 	
 	return request.URL, nil
 }
+
+// DeleteObject deletes a file from S3
+func (s *S3Client) DeleteObject(ctx context.Context, s3Key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(s3Key),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete S3 object: %w", err)
+	}
+	
+	log.Printf("Deleted S3 object: %s", s3Key)
+	return nil
+}
