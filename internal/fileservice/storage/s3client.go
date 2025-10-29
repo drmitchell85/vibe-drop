@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
 )
 
@@ -164,4 +165,37 @@ func (s *S3Client) GenerateMultipartUploadURL(ctx context.Context, uploadInfo *M
 	}
 
 	return request.URL, nil
+}
+
+// CompletedPart represents a completed multipart upload part
+type CompletedPart struct {
+	PartNumber int
+	ETag       string
+}
+
+// CompleteMultipartUpload finishes a multipart upload
+func (s *S3Client) CompleteMultipartUpload(ctx context.Context, uploadInfo *MultipartUploadInfo, parts []CompletedPart) error {
+	// Convert our parts to S3 types
+	completedParts := make([]types.CompletedPart, len(parts))
+	for i, part := range parts {
+		completedParts[i] = types.CompletedPart{
+			PartNumber: aws.Int32(int32(part.PartNumber)),
+			ETag:       aws.String(part.ETag),
+		}
+	}
+
+	_, err := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(s.bucket),
+		Key:      aws.String(uploadInfo.Key),
+		UploadId: aws.String(uploadInfo.UploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to complete multipart upload: %w", err)
+	}
+
+	log.Printf("Completed multipart upload: %s (uploadID: %s)", uploadInfo.Key, uploadInfo.UploadID)
+	return nil
 }
