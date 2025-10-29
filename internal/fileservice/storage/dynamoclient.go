@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -167,4 +168,113 @@ func (d *DynamoClient) DeleteFileMetadata(ctx context.Context, fileID string) er
 
 	log.Printf("Deleted file metadata for fileID: %s", fileID)
 	return nil
+}
+
+// FileChunk represents a single chunk in the chunks table
+type FileChunk struct {
+	FileID      string `json:"fileID" dynamodbav:"fileID"`
+	ChunkNumber int    `json:"chunkNumber" dynamodbav:"chunkNumber"`
+	Size        int64  `json:"size" dynamodbav:"size"`
+	ETag        string `json:"etag" dynamodbav:"etag"`
+	Status      string `json:"status" dynamodbav:"status"` // "pending", "uploaded", "failed"
+	UploadedAt  string `json:"uploadedAt,omitempty" dynamodbav:"uploadedAt,omitempty"`
+	S3PartNumber int   `json:"s3PartNumber" dynamodbav:"s3PartNumber"`
+}
+
+// SaveFileChunk saves chunk metadata to DynamoDB
+func (d *DynamoClient) SaveFileChunk(ctx context.Context, chunk *FileChunk) error {
+	item, err := attributevalue.MarshalMap(chunk)
+	if err != nil {
+		return fmt.Errorf("failed to marshal chunk: %w", err)
+	}
+
+	_, err = d.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String("vibe-drop-chunks"),
+		Item:      item,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save chunk metadata: %w", err)
+	}
+
+	log.Printf("Saved chunk metadata for fileID: %s, chunk: %d", chunk.FileID, chunk.ChunkNumber)
+	return nil
+}
+
+// GetFileChunks retrieves all chunks for a file
+func (d *DynamoClient) GetFileChunks(ctx context.Context, fileID string) ([]FileChunk, error) {
+	result, err := d.client.Query(ctx, &dynamodb.QueryInput{
+		TableName: aws.String("vibe-drop-chunks"),
+		KeyConditionExpression: aws.String("fileID = :fileID"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":fileID": &types.AttributeValueMemberS{Value: fileID},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chunks: %w", err)
+	}
+
+	var chunks []FileChunk
+	for _, item := range result.Items {
+		var chunk FileChunk
+		err = attributevalue.UnmarshalMap(item, &chunk)
+		if err != nil {
+			log.Printf("Failed to unmarshal chunk item: %v", err)
+			continue
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks, nil
+}
+
+// UpdateChunkStatus updates a chunk's upload status and ETag
+func (d *DynamoClient) UpdateChunkStatus(ctx context.Context, fileID string, chunkNumber int, status string, etag string) error {
+	updateExpression := "SET #status = :status"
+	expressionAttributeNames := map[string]string{
+		"#status": "status",
+	}
+	expressionAttributeValues := map[string]types.AttributeValue{
+		":status": &types.AttributeValueMemberS{Value: status},
+	}
+
+	// Add ETag and uploadedAt if status is "uploaded"
+	if status == "uploaded" && etag != "" {
+		updateExpression += ", etag = :etag, uploadedAt = :uploadedAt"
+		expressionAttributeValues[":etag"] = &types.AttributeValueMemberS{Value: etag}
+		expressionAttributeValues[":uploadedAt"] = &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)}
+	}
+
+	_, err := d.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String("vibe-drop-chunks"),
+		Key: map[string]types.AttributeValue{
+			"fileID":      &types.AttributeValueMemberS{Value: fileID},
+			"chunkNumber": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", chunkNumber)},
+		},
+		UpdateExpression:          aws.String(updateExpression),
+		ExpressionAttributeNames:  expressionAttributeNames,
+		ExpressionAttributeValues: expressionAttributeValues,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update chunk status: %w", err)
+	}
+
+	log.Printf("Updated chunk %d status to %s for fileID: %s", chunkNumber, status, fileID)
+	return nil
+}
+
+// CheckUploadComplete checks if all chunks are uploaded and returns completion status
+func (d *DynamoClient) CheckUploadComplete(ctx context.Context, fileID string) (bool, []FileChunk, error) {
+	chunks, err := d.GetFileChunks(ctx, fileID)
+	if err != nil {
+		return false, nil, err
+	}
+
+	// Check if all chunks are uploaded
+	for _, chunk := range chunks {
+		if chunk.Status != "uploaded" {
+			return false, chunks, nil // Not complete yet
+		}
+	}
+
+	return len(chunks) > 0, chunks, nil // Complete if we have chunks and all are uploaded
 }

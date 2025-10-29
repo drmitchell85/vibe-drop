@@ -42,13 +42,14 @@ A Dropbox-style file storage application built with Go microservices architectur
 - ✅ Users can download files via presigned URLs  
 - ✅ File metadata management with DynamoDB
 - ✅ File deletion (S3 + metadata)
+- ✅ Large file chunking support (up to 50GB) with multipart uploads
+- ✅ Chunk tracking and upload progress monitoring
 - 🚧 User authentication and authorization (planned)
 - 🚧 React-based web interface (planned)
-- 🚧 Large file chunking support (up to 50GB) (planned)
 
 ## Non-functional Requirements
 - ✅ Prioritize availability over consistency
-- 🚧 Documents can be up to 50GB with resumable uploads/downloads (planned)
+- ✅ Documents can be up to 50GB with multipart uploads and chunk tracking
 - ✅ High data integrity through AWS S3
 - ✅ Environment-aware configuration (dev/staging/prod)
 
@@ -60,11 +61,13 @@ All requests are proxied through the API Gateway to the File Service.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET    | `/health` | Health check for API Gateway |
-| POST   | `/files/upload-url` | Get presigned URL for file upload |
+| POST   | `/files/upload-url` | Get presigned URL(s) for file upload (single or multipart) |
 | GET    | `/files` | List all files for user |
 | GET    | `/files/{id}` | Get file metadata |
 | GET    | `/files/{id}/download-url` | Get presigned URL for file download |
 | DELETE | `/files/{id}` | Delete file from S3 and metadata |
+| POST   | `/files/{fileId}/chunks/{chunkNumber}/complete` | Mark a chunk as uploaded (multipart) |
+| POST   | `/files/{fileId}/complete` | Complete multipart upload |
 
 > **Note**: Full interactive API documentation will be available via Swagger UI in Phase 5
 
@@ -72,12 +75,15 @@ All requests are proxied through the API Gateway to the File Service.
 Direct service endpoints (normally accessed via API Gateway).
 
 #### Upload File
+
+**Single File Upload (<5GB):**
 ```http
 POST /files/upload-url
 Content-Type: application/json
 
 {
-  "filename": "document.pdf"
+  "filename": "document.pdf",
+  "size": 1048576
 }
 ```
 
@@ -86,8 +92,59 @@ Content-Type: application/json
 {
   "url": "http://localhost:4566/vibe-drop-bucket/uuid-filename?X-Amz-Signature=...",
   "expires_at": "2025-10-28T16:15:00Z",
-  "file_id": "uuid-generated-id"
+  "file_id": "uuid-generated-id",
+  "upload_type": "single"
 }
+```
+
+**Multipart Upload (≥5GB):**
+```http
+POST /files/upload-url
+Content-Type: application/json
+
+{
+  "filename": "large-video.mp4",
+  "size": 20000000000
+}
+```
+
+**Response:**
+```json
+{
+  "file_id": "uuid-generated-id",
+  "upload_type": "multipart",
+  "chunks": [
+    {
+      "chunk_number": 1,
+      "url": "http://localhost:4566/vibe-drop-bucket/uuid-filename?partNumber=1&uploadId=...",
+      "expires_at": "2025-10-28T16:15:00Z",
+      "size": 5368709120
+    },
+    {
+      "chunk_number": 2,
+      "url": "http://localhost:4566/vibe-drop-bucket/uuid-filename?partNumber=2&uploadId=...",
+      "expires_at": "2025-10-28T16:15:00Z", 
+      "size": 5368709120
+    }
+  ]
+}
+```
+
+#### Complete Chunk Upload
+```http
+POST /files/{fileId}/chunks/{chunkNumber}/complete
+Content-Type: application/json
+
+{
+  "etag": "d41d8cd98f00b204e9800998ecf8427e",
+  "status": "uploaded"
+}
+```
+
+#### Complete Multipart Upload
+```http
+POST /files/{fileId}/complete
+Content-Type: application/json
 ```
 
 #### Download File
@@ -130,9 +187,31 @@ GET /files/{file_id}/download-url
    docker run --rm -p 4566:4566 localstack/localstack
    ```
 
-4. **Create S3 bucket in LocalStack**
+4. **Create S3 bucket and DynamoDB tables in LocalStack**
    ```bash
+   # Create S3 bucket
    aws --endpoint-url=http://localhost:4566 s3 mb s3://vibe-drop-bucket
+   
+   # Create DynamoDB tables
+   aws dynamodb create-table \
+       --table-name vibe-drop-files \
+       --attribute-definitions AttributeName=fileID,AttributeType=S \
+       --key-schema AttributeName=fileID,KeyType=HASH \
+       --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+       --endpoint-url http://localhost:4566 \
+       --region us-east-1
+   
+   aws dynamodb create-table \
+       --table-name vibe-drop-chunks \
+       --attribute-definitions \
+           AttributeName=fileID,AttributeType=S \
+           AttributeName=chunkNumber,AttributeType=N \
+       --key-schema \
+           AttributeName=fileID,KeyType=HASH \
+           AttributeName=chunkNumber,KeyType=RANGE \
+       --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+       --endpoint-url http://localhost:4566 \
+       --region us-east-1
    ```
 
 5. **Start the services**
@@ -150,10 +229,15 @@ GET /files/{file_id}/download-url
    curl http://localhost:8080/health  # API Gateway
    curl http://localhost:8081/health  # File Service
    
-   # Upload a file
+   # Upload a small file (single upload)
    curl -X POST http://localhost:8080/files/upload-url \
      -H "Content-Type: application/json" \
-     -d '{"filename": "test.txt"}'
+     -d '{"filename": "test.txt", "size": 1024}'
+   
+   # Upload a large file (multipart)
+   curl -X POST http://localhost:8080/files/upload-url \
+     -H "Content-Type: application/json" \
+     -d '{"filename": "large-video.mp4", "size": 20000000000}'
    ```
 
 ### Environment Configuration
@@ -201,7 +285,7 @@ The React frontend will provide:
 ## Development Status
 - ✅ **Phase 1**: Basic microservices architecture with S3 integration  
 - ✅ **Phase 2**: Database integration for metadata (DynamoDB implemented)
-- 🚧 **Phase 3**: Large file support with chunking/multipart uploads (up to 50GB)
+- ✅ **Phase 3**: Large file support with chunking/multipart uploads (up to 50GB)
 - 🚧 **Phase 4**: User authentication and authorization
 - 🚧 **Phase 5**: React frontend and Swagger API documentation
 - 🚧 **Phase 6**: Advanced features (resumable uploads, file sharing, versioning)

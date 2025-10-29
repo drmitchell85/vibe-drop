@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
 )
 
@@ -115,5 +116,86 @@ func (s *S3Client) DeleteObject(ctx context.Context, s3Key string) error {
 	}
 	
 	log.Printf("Deleted S3 object: %s", s3Key)
+	return nil
+}
+
+// MultipartUploadInfo contains details for a multipart upload
+type MultipartUploadInfo struct {
+	UploadID string
+	Key      string
+}
+
+// InitiateMultipartUpload starts a multipart upload process
+func (s *S3Client) InitiateMultipartUpload(ctx context.Context, filename string) (*MultipartUploadInfo, error) {
+	fileID := uuid.New().String()
+	key := fmt.Sprintf("%s-%s", fileID, filename)
+
+	result, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initiate multipart upload: %w", err)
+	}
+
+	info := &MultipartUploadInfo{
+		UploadID: *result.UploadId,
+		Key:      key,
+	}
+
+	log.Printf("Initiated multipart upload: %s (uploadID: %s)", key, info.UploadID)
+	return info, nil
+}
+
+// GenerateMultipartUploadURL creates presigned URLs for each chunk
+func (s *S3Client) GenerateMultipartUploadURL(ctx context.Context, uploadInfo *MultipartUploadInfo, partNumber int) (string, error) {
+	presignClient := s3.NewPresignClient(s.client)
+
+	request, err := presignClient.PresignUploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(s.bucket),
+		Key:        aws.String(uploadInfo.Key),
+		PartNumber: aws.Int32(int32(partNumber)),
+		UploadId:   aws.String(uploadInfo.UploadID),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = 15 * time.Minute
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to generate multipart upload URL for part %d: %w", partNumber, err)
+	}
+
+	return request.URL, nil
+}
+
+// CompletedPart represents a completed multipart upload part
+type CompletedPart struct {
+	PartNumber int
+	ETag       string
+}
+
+// CompleteMultipartUpload finishes a multipart upload
+func (s *S3Client) CompleteMultipartUpload(ctx context.Context, uploadInfo *MultipartUploadInfo, parts []CompletedPart) error {
+	// Convert our parts to S3 types
+	completedParts := make([]types.CompletedPart, len(parts))
+	for i, part := range parts {
+		completedParts[i] = types.CompletedPart{
+			PartNumber: aws.Int32(int32(part.PartNumber)),
+			ETag:       aws.String(part.ETag),
+		}
+	}
+
+	_, err := s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(s.bucket),
+		Key:      aws.String(uploadInfo.Key),
+		UploadId: aws.String(uploadInfo.UploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to complete multipart upload: %w", err)
+	}
+
+	log.Printf("Completed multipart upload: %s (uploadID: %s)", uploadInfo.Key, uploadInfo.UploadID)
 	return nil
 }
