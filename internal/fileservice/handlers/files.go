@@ -50,11 +50,29 @@ type uploadRequest struct {
 func parseUploadRequest(r *http.Request) (*uploadRequest, error) {
 	var req uploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return nil, fmt.Errorf("invalid request body")
+		return nil, &common.ValidationError{
+			Field:   "request_body",
+			Code:    common.ErrorCodeBadRequest,
+			Message: "Invalid JSON format: " + err.Error(),
+		}
 	}
-	if req.Filename == "" {
-		return nil, fmt.Errorf("filename is required")
+	
+	// Convert to validation request and validate
+	validationReq := &common.FileUploadRequest{
+		Filename: req.Filename,
+		Size:     req.Size,
 	}
+	
+	if validationErrors := common.ValidateFileUpload(validationReq); len(validationErrors) > 0 {
+		// Return the first validation error for simplicity
+		firstError := validationErrors[0]
+		return nil, &common.ValidationError{
+			Field:   firstError.Field,
+			Code:    firstError.Code,
+			Message: firstError.Message,
+		}
+	}
+	
 	return &req, nil
 }
 
@@ -199,7 +217,13 @@ func GenerateUploadURLHandler(s3Client *storage.S3Client, dynamoClient *storage.
 	return func(w http.ResponseWriter, r *http.Request) {
 		req, err := parseUploadRequest(r)
 		if err != nil {
-			common.WriteValidationError(w, "Invalid upload request", err.Error())
+			// Check if it's a validation error with specific code
+			if validationErr, ok := err.(*common.ValidationError); ok {
+				common.WriteErrorResponse(w, http.StatusBadRequest, validationErr.Code, validationErr.Message, 
+					fmt.Sprintf("Field: %s", validationErr.Field))
+			} else {
+				common.WriteValidationError(w, "Invalid upload request", err.Error())
+			}
 			return
 		}
 

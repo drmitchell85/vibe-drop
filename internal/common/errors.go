@@ -213,8 +213,9 @@ func ValidateJSONRequest(r *http.Request, target interface{}) error {
 
 // ValidationError represents a validation error with field-specific information
 type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
+	Field   string    `json:"field"`
+	Code    ErrorCode `json:"code"`
+	Message string    `json:"message"`
 }
 
 func (e *ValidationError) Error() string {

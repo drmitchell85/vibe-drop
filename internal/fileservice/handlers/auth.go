@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -52,9 +51,16 @@ func RegisterHandler(authServices *AuthServices) http.HandlerFunc {
 			return
 		}
 
-		// Step 2: Validate input data
-		if err := validateRegistrationInput(&req); err != nil {
-			common.WriteValidationError(w, "Validation failed", err.Error())
+		// Step 2: Validate input data using comprehensive validation
+		validationReq := &common.UserRegistrationRequest{
+			Username: req.Username,
+			Email:    req.Email,
+			Password: req.Password,
+		}
+		
+		if validationErrors := common.ValidateUserRegistration(validationReq); len(validationErrors) > 0 {
+			errorCode, message, details := common.FormatValidationErrors(validationErrors)
+			common.WriteErrorResponse(w, http.StatusBadRequest, errorCode, message, details)
 			return
 		}
 
@@ -115,43 +121,6 @@ func RegisterHandler(authServices *AuthServices) http.HandlerFunc {
 	}
 }
 
-// validateRegistrationInput checks if the registration data is valid
-func validateRegistrationInput(req *RegisterRequest) error {
-	// Validate username
-	if strings.TrimSpace(req.Username) == "" {
-		return fmt.Errorf("username is required")
-	}
-	if len(req.Username) < 3 {
-		return fmt.Errorf("username must be at least 3 characters long")
-	}
-	if len(req.Username) > 50 {
-		return fmt.Errorf("username must be less than 50 characters long")
-	}
-
-	// Validate email format
-	if strings.TrimSpace(req.Email) == "" {
-		return fmt.Errorf("email is required")
-	}
-	if !isValidEmail(req.Email) {
-		return fmt.Errorf("invalid email format")
-	}
-
-	// Validate password using our password service
-	passwordService := auth.NewPasswordService()
-	if err := passwordService.ValidatePassword(req.Password); err != nil {
-		return fmt.Errorf("password validation failed: %w", err)
-	}
-
-	return nil
-}
-
-// isValidEmail checks if email format is valid using regex
-func isValidEmail(email string) bool {
-	// Simple but robust email regex
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	return emailRegex.MatchString(email)
-}
-
 // LoginRequest represents the data sent by client for login
 type LoginRequest struct {
 	Email    string `json:"email"`
@@ -174,9 +143,17 @@ func LoginHandler(authServices *AuthServices) http.HandlerFunc {
 			return
 		}
 
-		// Step 2: Validate input
-		if err := validateLoginInput(&req); err != nil {
-			common.WriteValidationError(w, "Validation failed", err.Error())
+		// Step 2: Validate input using comprehensive validation
+		if emailErrors := common.ValidateEmail(req.Email); len(emailErrors) > 0 {
+			firstError := emailErrors[0]
+			common.WriteErrorResponse(w, http.StatusBadRequest, firstError.Code, firstError.Message, 
+				fmt.Sprintf("Field: %s", firstError.Field))
+			return
+		}
+		
+		if req.Password == "" {
+			common.WriteErrorResponse(w, http.StatusBadRequest, common.ErrorCodePasswordRequired, 
+				"Password is required", "Field: password")
 			return
 		}
 
@@ -222,17 +199,4 @@ func LoginHandler(authServices *AuthServices) http.HandlerFunc {
 	}
 }
 
-// validateLoginInput checks if the login data is valid
-func validateLoginInput(req *LoginRequest) error {
-	if strings.TrimSpace(req.Email) == "" {
-		return fmt.Errorf("email is required")
-	}
-	if strings.TrimSpace(req.Password) == "" {
-		return fmt.Errorf("password is required")
-	}
-	if !isValidEmail(req.Email) {
-		return fmt.Errorf("invalid email format")
-	}
-	return nil
-}
 
