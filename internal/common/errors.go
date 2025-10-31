@@ -44,9 +44,20 @@ type ErrorInfo struct {
 	Details string    `json:"details,omitempty"`
 }
 
+// SuccessCode represents specific success types for better client handling
+type SuccessCode string
+
+const (
+	SuccessCodeCreated   SuccessCode = "CREATED"
+	SuccessCodeOK        SuccessCode = "OK"
+	SuccessCodeAccepted  SuccessCode = "ACCEPTED"
+	SuccessCodeNoContent SuccessCode = "NO_CONTENT"
+)
+
 // SuccessResponse represents the standard success response format
 type SuccessResponse struct {
 	Success   bool        `json:"success"`
+	Code      SuccessCode `json:"code"`
 	Data      interface{} `json:"data"`
 	RequestID string      `json:"request_id"`
 	Timestamp string      `json:"timestamp"`
@@ -83,11 +94,12 @@ func WriteErrorResponse(w http.ResponseWriter, statusCode int, errorCode ErrorCo
 }
 
 // WriteSuccessResponse sends a standardized success response
-func WriteSuccessResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+func WriteSuccessResponse(w http.ResponseWriter, statusCode int, successCode SuccessCode, data interface{}) {
 	requestID := generateRequestID()
 	
 	successResponse := SuccessResponse{
 		Success:   true,
+		Code:      successCode,
 		Data:      data,
 		RequestID: requestID,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -101,6 +113,28 @@ func WriteSuccessResponse(w http.ResponseWriter, statusCode int, data interface{
 		WriteErrorResponse(w, http.StatusInternalServerError, ErrorCodeInternalServer, 
 			"Failed to encode response", "JSON encoding error")
 	}
+}
+
+// Convenience functions for common success responses
+
+// WriteCreatedResponse sends a 201 Created success response
+func WriteCreatedResponse(w http.ResponseWriter, data interface{}) {
+	WriteSuccessResponse(w, http.StatusCreated, SuccessCodeCreated, data)
+}
+
+// WriteOKResponse sends a 200 OK success response
+func WriteOKResponse(w http.ResponseWriter, data interface{}) {
+	WriteSuccessResponse(w, http.StatusOK, SuccessCodeOK, data)
+}
+
+// WriteAcceptedResponse sends a 202 Accepted success response
+func WriteAcceptedResponse(w http.ResponseWriter, data interface{}) {
+	WriteSuccessResponse(w, http.StatusAccepted, SuccessCodeAccepted, data)
+}
+
+// WriteNoContentResponse sends a 204 No Content success response
+func WriteNoContentResponse(w http.ResponseWriter) {
+	WriteSuccessResponse(w, http.StatusNoContent, SuccessCodeNoContent, nil)
 }
 
 // Convenience functions for common error types
