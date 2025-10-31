@@ -1,19 +1,15 @@
 package middleware
 
 import (
-	"encoding/json"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+	"vibe-drop/internal/common"
 
 	"golang.org/x/time/rate"
 )
 
-type RateLimitResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-}
 
 type IPRateLimiter struct {
 	ips map[string]*rate.Limiter
@@ -80,14 +76,8 @@ func RateLimit(limiter *IPRateLimiter) func(http.Handler) http.Handler {
 			rateLimiter := limiter.GetLimiter(ip)
 			
 			if !rateLimiter.Allow() {
-				response := RateLimitResponse{
-					Error:   "rate_limit_exceeded",
-					Message: "Too many requests. Please try again later.",
-				}
-				
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				json.NewEncoder(w).Encode(response)
+				common.WriteErrorResponse(w, http.StatusTooManyRequests, common.ErrorCodeTooManyRequests, 
+					"Too many requests", "Please try again later")
 				return
 			}
 			

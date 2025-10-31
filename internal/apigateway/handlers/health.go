@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
+	"vibe-drop/internal/common"
 )
 
 type HealthResponse struct {
@@ -19,7 +19,5 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 		Service:   "api-gateway",
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	common.WriteOKResponse(w, response)
 }
