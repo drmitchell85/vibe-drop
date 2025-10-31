@@ -332,12 +332,9 @@ func DeleteFileHandler(s3Client *storage.S3Client, dynamoClient *storage.DynamoC
 			return
 		}
 
-		responseData := map[string]interface{}{
-			"message": "File deleted successfully",
-			"file_id": fileID,
-		}
-
-		common.WriteOKResponse(w, responseData)
+		// For DELETE operations, 204 No Content is more appropriate than 200 OK
+		// since the resource has been successfully deleted and there's no content to return
+		common.WriteNoContentResponse(w)
 	}
 }
 
