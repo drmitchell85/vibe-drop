@@ -29,6 +29,7 @@ A Dropbox-style file storage application built with Go microservices architectur
 
 ### Tech Stack
 - **Backend**: Go 1.21+ with Gorilla Mux
+- **Authentication**: JWT tokens with bcrypt password hashing
 - **Database**: DynamoDB with AWS SDK v2
 - **Cloud Storage**: AWS S3 with AWS SDK v2
 - **Frontend**: React (planned)
@@ -44,7 +45,7 @@ A Dropbox-style file storage application built with Go microservices architectur
 - ✅ File deletion (S3 + metadata)
 - ✅ Large file chunking support (up to 50GB) with multipart uploads
 - ✅ Chunk tracking and upload progress monitoring
-- 🚧 User authentication and authorization (planned)
+- ✅ User authentication and authorization with JWT
 - 🚧 React-based web interface (planned)
 
 ## Non-functional Requirements
@@ -61,20 +62,75 @@ All requests are proxied through the API Gateway to the File Service.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET    | `/health` | Health check for API Gateway |
-| POST   | `/files/upload-url` | Get presigned URL(s) for file upload (single or multipart) |
-| GET    | `/files` | List all files for user |
-| GET    | `/files/{id}` | Get file metadata |
-| GET    | `/files/{id}/download-url` | Get presigned URL for file download |
-| DELETE | `/files/{id}` | Delete file from S3 and metadata |
-| POST   | `/files/{fileId}/chunks/{chunkNumber}/complete` | Mark a chunk as uploaded (multipart) |
-| POST   | `/files/{fileId}/complete` | Complete multipart upload |
+| POST   | `/auth/register` | Register new user account |
+| POST   | `/auth/login` | Login and receive JWT token |
+| POST   | `/files/upload-url` | Get presigned URL(s) for file upload (requires auth) |
+| GET    | `/files` | List all files for user (requires auth) |
+| GET    | `/files/{id}` | Get file metadata (requires auth) |
+| GET    | `/files/{id}/download-url` | Get presigned URL for file download (requires auth) |
+| DELETE | `/files/{id}` | Delete file from S3 and metadata (requires auth) |
+| POST   | `/files/{fileId}/chunks/{chunkNumber}/complete` | Mark a chunk as uploaded (requires auth) |
+| POST   | `/files/{fileId}/complete` | Complete multipart upload (requires auth) |
 
 > **Note**: Full interactive API documentation will be available via Swagger UI in Phase 5
 
 ### File Service (Port 8081)
 Direct service endpoints (normally accessed via API Gateway).
 
+#### User Registration
+```http
+POST /auth/register
+Content-Type: application/json
+
+{
+  "username": "john_doe",
+  "email": "john@example.com",
+  "password": "securePassword123"
+}
+```
+
+**Response:**
+```json
+{
+  "user": {
+    "user_id": "c303e4d6-eed4-4526-8e08-6dcf1e196681",
+    "username": "john_doe",
+    "email": "john@example.com", 
+    "created_at": "2025-10-29T11:05:32-04:00"
+  },
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+#### User Login
+```http
+POST /auth/login
+Content-Type: application/json
+
+{
+  "email": "john@example.com",
+  "password": "securePassword123"
+}
+```
+
+**Response:**
+```json
+{
+  "user": {
+    "user_id": "c303e4d6-eed4-4526-8e08-6dcf1e196681",
+    "username": "john_doe",
+    "email": "john@example.com",
+    "created_at": "2025-10-29T11:05:32-04:00"
+  },
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
 #### Upload File
+**Note:** All file operations require authentication. Include JWT token in Authorization header:
+```
+Authorization: Bearer <token>
+```
 
 **Single File Upload (<5GB):**
 ```http
@@ -212,6 +268,19 @@ GET /files/{file_id}/download-url
        --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
        --endpoint-url http://localhost:4566 \
        --region us-east-1
+   
+   aws dynamodb create-table \
+       --table-name vibe-drop-users \
+       --attribute-definitions \
+           AttributeName=userID,AttributeType=S \
+           AttributeName=email,AttributeType=S \
+       --key-schema \
+           AttributeName=userID,KeyType=HASH \
+       --global-secondary-indexes \
+           'IndexName=email-index,KeySchema=[{AttributeName=email,KeyType=HASH}],Projection={ProjectionType=ALL},ProvisionedThroughput={ReadCapacityUnits=5,WriteCapacityUnits=5}' \
+       --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+       --endpoint-url http://localhost:4566 \
+       --region us-east-1
    ```
 
 5. **Start the services**
@@ -229,13 +298,26 @@ GET /files/{file_id}/download-url
    curl http://localhost:8080/health  # API Gateway
    curl http://localhost:8081/health  # File Service
    
-   # Upload a small file (single upload)
-   curl -X POST http://localhost:8080/files/upload-url \
+   # Register a user
+   curl -X POST http://localhost:8081/auth/register \
+     -H "Content-Type: application/json" \
+     -d '{"username": "testuser", "email": "test@example.com", "password": "securePassword123"}'
+   
+   # Login and get token
+   TOKEN=$(curl -s -X POST http://localhost:8081/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"email": "test@example.com", "password": "securePassword123"}' | \
+     jq -r '.token')
+   
+   # Upload a small file (single upload) - requires authentication
+   curl -X POST http://localhost:8081/files/upload-url \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"filename": "test.txt", "size": 1024}'
    
-   # Upload a large file (multipart)
-   curl -X POST http://localhost:8080/files/upload-url \
+   # Upload a large file (multipart) - requires authentication  
+   curl -X POST http://localhost:8081/files/upload-url \
+     -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"filename": "large-video.mp4", "size": 20000000000}'
    ```
@@ -261,10 +343,10 @@ FILE_SERVICE_URL=https://file-service.yourdomain.com
 ```
 
 ## Core Entities
-- **Files**: Stored in S3 with unique keys
+- **Users**: User accounts with JWT authentication (DynamoDB)
+- **Files**: Stored in S3 with unique keys, owned by users
 - **File Metadata**: File information, ownership, S3 key mapping (DynamoDB)
-- **File Chunks**: Support for large file uploads (DynamoDB, ready for chunking)
-- **Users**: User accounts and authentication (planned)
+- **File Chunks**: Support for large file uploads with progress tracking (DynamoDB)
 
 ## Frontend (Planned)
 The React frontend will provide:
@@ -286,7 +368,7 @@ The React frontend will provide:
 - ✅ **Phase 1**: Basic microservices architecture with S3 integration  
 - ✅ **Phase 2**: Database integration for metadata (DynamoDB implemented)
 - ✅ **Phase 3**: Large file support with chunking/multipart uploads (up to 50GB)
-- 🚧 **Phase 4**: User authentication and authorization
+- ✅ **Phase 4**: User authentication and authorization with JWT
 - 🚧 **Phase 5**: React frontend and Swagger API documentation
 - 🚧 **Phase 6**: Advanced features (resumable uploads, file sharing, versioning)
 
