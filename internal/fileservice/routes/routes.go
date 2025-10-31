@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"time"
+	"vibe-drop/internal/auth"
 	"vibe-drop/internal/fileservice/config"
 	"vibe-drop/internal/fileservice/handlers"
 	"vibe-drop/internal/fileservice/storage"
@@ -12,8 +14,21 @@ func SetupRoutes(cfg *config.Config, s3Client *storage.S3Client, dynamoClient *s
 	// S3 client is now passed in from server.go
 	r := mux.NewRouter()
 
-	// Health check
+	// Create auth services
+	jwtService := auth.NewJWTService("your-jwt-secret-key-change-in-production", time.Hour)
+	passwordService := auth.NewPasswordService()
+	authServices := &handlers.AuthServices{
+		JWTService:      jwtService,
+		PasswordService: passwordService,
+		DynamoClient:    dynamoClient,
+	}
+
+	// Health check (no auth needed)
 	r.HandleFunc("/health", handlers.HealthHandler).Methods("GET")
+
+	// Authentication endpoints (no auth needed)
+	r.Handle("/auth/register", handlers.RegisterHandler(authServices)).Methods("POST")
+	r.Handle("/auth/login", handlers.LoginHandler(authServices)).Methods("POST")
 
 	// File operations - pass clients to handlers that need them
 	r.Handle("/files/upload-url", handlers.GenerateUploadURLHandler(s3Client, dynamoClient)).Methods("POST")
