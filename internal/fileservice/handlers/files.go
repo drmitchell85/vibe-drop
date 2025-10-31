@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"vibe-drop/internal/common"
 	"vibe-drop/internal/fileservice/storage"
 )
 
@@ -49,11 +50,29 @@ type uploadRequest struct {
 func parseUploadRequest(r *http.Request) (*uploadRequest, error) {
 	var req uploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return nil, fmt.Errorf("invalid request body")
+		return nil, &common.ValidationError{
+			Field:   "request_body",
+			Code:    common.ErrorCodeBadRequest,
+			Message: "Invalid JSON format: " + err.Error(),
+		}
 	}
-	if req.Filename == "" {
-		return nil, fmt.Errorf("filename is required")
+	
+	// Convert to validation request and validate
+	validationReq := &common.FileUploadRequest{
+		Filename: req.Filename,
+		Size:     req.Size,
 	}
+	
+	if validationErrors := common.ValidateFileUpload(validationReq); len(validationErrors) > 0 {
+		// Return the first validation error for simplicity
+		firstError := validationErrors[0]
+		return nil, &common.ValidationError{
+			Field:   firstError.Field,
+			Code:    firstError.Code,
+			Message: firstError.Message,
+		}
+	}
+	
 	return &req, nil
 }
 
@@ -198,7 +217,13 @@ func GenerateUploadURLHandler(s3Client *storage.S3Client, dynamoClient *storage.
 	return func(w http.ResponseWriter, r *http.Request) {
 		req, err := parseUploadRequest(r)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			// Check if it's a validation error with specific code
+			if validationErr, ok := err.(*common.ValidationError); ok {
+				common.WriteErrorResponse(w, http.StatusBadRequest, validationErr.Code, validationErr.Message, 
+					fmt.Sprintf("Field: %s", validationErr.Field))
+			} else {
+				common.WriteValidationError(w, "Invalid upload request", err.Error())
+			}
 			return
 		}
 
@@ -210,13 +235,11 @@ func GenerateUploadURLHandler(s3Client *storage.S3Client, dynamoClient *storage.
 		}
 
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			common.WriteS3Error(w, "Failed to generate upload URL", err.Error())
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		common.WriteOKResponse(w, response)
 	}
 }
 
@@ -228,14 +251,14 @@ func GenerateDownloadURLHandler(s3Client *storage.S3Client, dynamoClient *storag
 		// Look up file metadata from DynamoDB to get the correct S3 key
 		metadata, err := dynamoClient.GetFileMetadata(context.Background(), fileID)
 		if err != nil {
-			http.Error(w, "File not found", http.StatusNotFound)
+			common.WriteNotFoundError(w, "File not found", fmt.Sprintf("File ID: %s does not exist", fileID))
 			return
 		}
 
 		// Generate presigned URL using the correct S3 key from metadata
 		url, err := s3Client.GenerateDownloadURL(context.Background(), metadata.S3Key)
 		if err != nil {
-			http.Error(w, "Failed to generate download URL", http.StatusInternalServerError)
+			common.WriteS3Error(w, "Failed to generate download URL", err.Error())
 			return
 		}
 
@@ -245,9 +268,7 @@ func GenerateDownloadURLHandler(s3Client *storage.S3Client, dynamoClient *storag
 			FileID:    fileID,
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		common.WriteOKResponse(w, response)
 	}
 }
 
@@ -259,7 +280,7 @@ func GetFileMetadataHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc
 		// Get real file metadata from DynamoDB
 		metadata, err := dynamoClient.GetFileMetadata(context.Background(), fileID)
 		if err != nil {
-			http.Error(w, "File not found", http.StatusNotFound)
+			common.WriteNotFoundError(w, "File not found", fmt.Sprintf("File ID: %s does not exist", fileID))
 			return
 		}
 
@@ -273,9 +294,7 @@ func GetFileMetadataHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc
 			UserID:      metadata.UserID,
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		common.WriteOKResponse(w, response)
 	}
 }
 
@@ -285,7 +304,7 @@ func ListFilesHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc {
 		// TODO: Replace with real user ID from auth
 		metadataList, err := dynamoClient.ListUserFiles(context.Background(), "default-user")
 		if err != nil {
-			http.Error(w, "Failed to list files", http.StatusInternalServerError)
+			common.WriteDatabaseError(w, "Failed to list files", err.Error())
 			return
 		}
 
@@ -302,12 +321,12 @@ func ListFilesHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc {
 			}
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		responseData := map[string]interface{}{
 			"files": files,
 			"count": len(files),
-		})
+		}
+
+		common.WriteOKResponse(w, responseData)
 	}
 }
 
@@ -319,32 +338,27 @@ func DeleteFileHandler(s3Client *storage.S3Client, dynamoClient *storage.DynamoC
 		// Get file metadata to find S3 key
 		metadata, err := dynamoClient.GetFileMetadata(context.Background(), fileID)
 		if err != nil {
-			http.Error(w, "File not found", http.StatusNotFound)
+			common.WriteNotFoundError(w, "File not found", fmt.Sprintf("File ID: %s does not exist", fileID))
 			return
 		}
 
 		// Delete from S3 first (fail fast if S3 deletion fails)
 		if err := s3Client.DeleteObject(context.Background(), metadata.S3Key); err != nil {
 			log.Printf("Failed to delete S3 object %s: %v", metadata.S3Key, err)
-			http.Error(w, "Failed to delete file from storage", http.StatusInternalServerError)
+			common.WriteS3Error(w, "Failed to delete file from storage", err.Error())
 			return
 		}
 
 		// Delete metadata from DynamoDB (only after S3 deletion succeeds)
 		if err := dynamoClient.DeleteFileMetadata(context.Background(), fileID); err != nil {
 			log.Printf("Warning: S3 object deleted but DynamoDB cleanup failed for %s: %v", fileID, err)
-			http.Error(w, "File deleted but metadata cleanup failed", http.StatusInternalServerError)
+			common.WriteDatabaseError(w, "File deleted but metadata cleanup failed", err.Error())
 			return
 		}
 
-		response := map[string]interface{}{
-			"message": "File deleted successfully",
-			"file_id": fileID,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		// For DELETE operations, 204 No Content is more appropriate than 200 OK
+		// since the resource has been successfully deleted and there's no content to return
+		common.WriteNoContentResponse(w)
 	}
 }
 
@@ -365,25 +379,25 @@ func CompleteMultipartUploadHandler(s3Client *storage.S3Client, dynamoClient *st
 		// Get file metadata to retrieve upload info
 		metadata, err := dynamoClient.GetFileMetadata(context.Background(), fileID)
 		if err != nil {
-			http.Error(w, "File not found", http.StatusNotFound)
+			common.WriteNotFoundError(w, "File not found", fmt.Sprintf("File ID: %s does not exist", fileID))
 			return
 		}
 
 		// Verify this is a multipart upload
 		if metadata.UploadType != "multipart" || metadata.S3UploadID == nil {
-			http.Error(w, "Not a multipart upload", http.StatusBadRequest)
+			common.WriteBadRequestError(w, "Not a multipart upload", "This file was not initiated as a multipart upload")
 			return
 		}
 
 		// Check that all chunks are uploaded
 		complete, chunks, err := dynamoClient.CheckUploadComplete(context.Background(), fileID)
 		if err != nil {
-			http.Error(w, "Failed to check upload status", http.StatusInternalServerError)
+			common.WriteDatabaseError(w, "Failed to check upload status", err.Error())
 			return
 		}
 
 		if !complete {
-			http.Error(w, "Not all chunks are uploaded yet", http.StatusBadRequest)
+			common.WriteBadRequestError(w, "Not all chunks are uploaded yet", "Some chunks are still missing or failed")
 			return
 		}
 
@@ -404,7 +418,7 @@ func CompleteMultipartUploadHandler(s3Client *storage.S3Client, dynamoClient *st
 
 		if err := s3Client.CompleteMultipartUpload(context.Background(), uploadInfo, parts); err != nil {
 			log.Printf("Failed to complete multipart upload: %v", err)
-			http.Error(w, "Failed to complete upload", http.StatusInternalServerError)
+			common.WriteS3Error(w, "Failed to complete upload", err.Error())
 			return
 		}
 
@@ -415,16 +429,14 @@ func CompleteMultipartUploadHandler(s3Client *storage.S3Client, dynamoClient *st
 			log.Printf("Warning: Failed to update file status: %v", err)
 		}
 
-		response := map[string]interface{}{
+		responseData := map[string]interface{}{
 			"message":       "Multipart upload completed successfully",
 			"file_id":       fileID,
 			"total_chunks":  len(chunks),
 			"completed_at":  time.Now().Format(time.RFC3339),
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		common.WriteOKResponse(w, responseData)
 	}
 }
 
@@ -438,7 +450,7 @@ func ChunkCompletionHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc
 		// Parse chunk number
 		var chunkNumber int
 		if _, err := fmt.Sscanf(chunkNumberStr, "%d", &chunkNumber); err != nil {
-			http.Error(w, "Invalid chunk number", http.StatusBadRequest)
+			common.WriteBadRequestError(w, "Invalid chunk number", fmt.Sprintf("Chunk number '%s' is not a valid integer", chunkNumberStr))
 			return
 		}
 
@@ -448,20 +460,20 @@ func ChunkCompletionHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc
 			Status string `json:"status"` // "uploaded" or "failed"
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			common.WriteValidationError(w, "Invalid request body", err.Error())
 			return
 		}
 
 		// Validate status
 		if req.Status != "uploaded" && req.Status != "failed" {
-			http.Error(w, "Status must be 'uploaded' or 'failed'", http.StatusBadRequest)
+			common.WriteValidationError(w, "Invalid status value", "Status must be 'uploaded' or 'failed'")
 			return
 		}
 
 		// Update chunk status
 		if err := dynamoClient.UpdateChunkStatus(context.Background(), fileID, chunkNumber, req.Status, req.ETag); err != nil {
 			log.Printf("Failed to update chunk status: %v", err)
-			http.Error(w, "Failed to update chunk status", http.StatusInternalServerError)
+			common.WriteDatabaseError(w, "Failed to update chunk status", err.Error())
 			return
 		}
 
@@ -469,11 +481,11 @@ func ChunkCompletionHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc
 		complete, chunks, err := dynamoClient.CheckUploadComplete(context.Background(), fileID)
 		if err != nil {
 			log.Printf("Failed to check upload completion: %v", err)
-			http.Error(w, "Failed to check upload status", http.StatusInternalServerError)
+			common.WriteDatabaseError(w, "Failed to check upload status", err.Error())
 			return
 		}
 
-		response := map[string]interface{}{
+		responseData := map[string]interface{}{
 			"chunk_number": chunkNumber,
 			"status":       req.Status,
 			"upload_complete": complete,
@@ -481,12 +493,10 @@ func ChunkCompletionHandler(dynamoClient *storage.DynamoClient) http.HandlerFunc
 
 		// If upload is complete, include completion details
 		if complete {
-			response["total_chunks"] = len(chunks)
-			response["message"] = "All chunks uploaded successfully - ready for completion"
+			responseData["total_chunks"] = len(chunks)
+			responseData["message"] = "All chunks uploaded successfully - ready for completion"
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		common.WriteOKResponse(w, responseData)
 	}
 }

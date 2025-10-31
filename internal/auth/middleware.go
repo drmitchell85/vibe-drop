@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"vibe-drop/internal/common"
 )
 
 // UserContextKey is used to store user info in request context
@@ -27,7 +28,7 @@ func AuthMiddleware(jwtService *JWTService) func(http.Handler) http.Handler {
 			token, err := extractTokenFromHeader(r)
 			if err != nil {
 				// No valid token found - reject the request
-				writeUnauthorizedError(w, err.Error())
+				common.WriteUnauthorizedError(w, "Authentication required", err.Error())
 				return // Stop here - don't call next handler
 			}
 			
@@ -35,7 +36,7 @@ func AuthMiddleware(jwtService *JWTService) func(http.Handler) http.Handler {
 			claims, err := jwtService.ValidateToken(token)
 			if err != nil {
 				// Invalid token - reject the request
-				writeUnauthorizedError(w, "Invalid token: "+err.Error())
+				common.WriteUnauthorizedError(w, "Invalid or expired token", err.Error())
 				return // Stop here - don't call next handler
 			}
 			
@@ -87,12 +88,6 @@ func addUserToContext(ctx context.Context, claims *Claims) context.Context {
 	return ctx
 }
 
-// writeUnauthorizedError sends a 401 Unauthorized response
-func writeUnauthorizedError(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	fmt.Fprintf(w, `{"error": "unauthorized", "message": "%s"}`, message)
-}
 
 // Helper functions for handlers to extract user info from context
 

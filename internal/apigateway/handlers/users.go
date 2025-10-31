@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
+	"vibe-drop/internal/common"
 
 	"github.com/gorilla/mux"
 )
@@ -11,40 +11,19 @@ func GetUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["id"]
 
-	response := ErrorResponse{
-		Error:   "not_implemented",
-		Message: "User profile for ID " + userID + " not yet implemented",
-		Service: "user-service",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(response)
+	common.WriteErrorResponse(w, http.StatusNotImplemented, common.ErrorCode("NOT_IMPLEMENTED"), 
+		"User profile endpoint not yet implemented", "User profile for ID " + userID + " will be available in a future release")
 }
 
 func UpdateUserProfileHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["id"]
 
-	response := ErrorResponse{
-		Error:   "not_implemented",
-		Message: "User profile update for ID " + userID + " not yet implemented",
-		Service: "user-service",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(response)
+	common.WriteErrorResponse(w, http.StatusNotImplemented, common.ErrorCode("NOT_IMPLEMENTED"), 
+		"User profile update endpoint not yet implemented", "User profile update for ID " + userID + " will be available in a future release")
 }
 
 func GetCurrentUserHandler(w http.ResponseWriter, r *http.Request) {
-	response := ErrorResponse{
-		Error:   "not_implemented",
-		Message: "Current user endpoint not yet implemented",
-		Service: "user-service",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(response)
+	common.WriteErrorResponse(w, http.StatusNotImplemented, common.ErrorCode("NOT_IMPLEMENTED"), 
+		"Current user endpoint not yet implemented", "This feature will be available in a future release")
 }

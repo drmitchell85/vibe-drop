@@ -1,20 +1,15 @@
 package handlers
 
 import (
-	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 
 	"github.com/gorilla/mux"
 	"vibe-drop/internal/apigateway/services"
+	"vibe-drop/internal/common"
 )
 
-type ErrorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-	Service string `json:"service"`
-}
 
 var fileServiceClient *services.FileServiceClient
 
@@ -38,7 +33,7 @@ func proxyToFileService(w http.ResponseWriter, r *http.Request, path string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("[%s] Failed to read request body: %v", requestID, err)
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		common.WriteBadRequestError(w, "Failed to read request body", err.Error())
 		return
 	}
 	defer r.Body.Close()
@@ -55,14 +50,8 @@ func proxyToFileService(w http.ResponseWriter, r *http.Request, path string) {
 	resp, err := fileServiceClient.ProxyRequest(r.Method, path, body, headers)
 	if err != nil {
 		log.Printf("[%s] File service request failed: %v", requestID, err)
-		response := ErrorResponse{
-			Error:   "service_unavailable",
-			Message: "File service is currently unavailable",
-			Service: "file-service",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(response)
+		common.WriteErrorResponse(w, http.StatusServiceUnavailable, common.ErrorCodeServiceUnavailable, 
+			"File service is currently unavailable", err.Error())
 		return
 	}
 	defer resp.Body.Close()
